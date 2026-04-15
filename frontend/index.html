@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AzDO Test Case Manager</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})()</script>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">⚡</div>
+    <div class="logo-text">AzDO <span>TestCase</span> Manager</div>
+  </div>
+  <div class="header-right">
+    <div class="api-input-wrap">
+      <span>API</span>
+      <input id="apiBase" value="http://localhost:8000" title="FastAPI backend URL"/>
+      <button class="btn btn-ghost btn-sm" onclick="pingBackend()">Ping</button>
+    </div>
+    <div class="status-pill">
+      <span class="dot" id="statusDot"></span>
+      <span id="statusText">Disconnected</span>
+    </div>
+    <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle theme"><span id="themeIcon">☀️</span></button>
+  </div>
+</header>
+
+<div class="app">
+<aside class="sidebar">
+  <div class="sidebar-label">Workflow</div>
+
+  <div class="step-item active" onclick="goTo(0)" id="step0">
+    <div class="step-num" id="snum0">1</div>
+    <div><div class="step-label">Configuration</div><div class="step-desc">AzDO connection & plan</div></div>
+  </div>
+  <div class="step-connector"></div>
+  <div class="step-item" onclick="goTo(1)" id="step1">
+    <div class="step-num" id="snum1">2</div>
+    <div><div class="step-label">Test Cases JSON</div><div class="step-desc">Paste or AI-generate</div></div>
+  </div>
+  <div class="step-connector"></div>
+  <div class="step-item" onclick="goTo(2)" id="step2">
+    <div class="step-num" id="snum2">3</div>
+    <div><div class="step-label">Preview & Validate</div><div class="step-desc">Server-side check</div></div>
+  </div>
+  <div class="step-connector"></div>
+  <div class="step-item" onclick="goTo(3)" id="step3">
+    <div class="step-num" id="snum3">4</div>
+    <div><div class="step-label">Upload to AzDO</div><div class="step-desc">Streamed via backend</div></div>
+  </div>
+
+  <div class="sidebar-divider"></div>
+  <div class="sidebar-label">Tools</div>
+
+  <div class="step-item" onclick="goTo(5)" id="step5">
+    <div class="step-num" id="snum5">📜</div>
+    <div><div class="step-label">Upload History</div><div class="step-desc">Past runs & logs</div></div>
+  </div>
+
+  <div style="margin-top:auto;padding-top:18px;border-top:1px solid var(--border)">
+    <div style="font-size:11px;color:var(--muted);line-height:1.7">
+      <div style="font-weight:700;color:var(--text);margin-bottom:4px;font-size:11.5px">💡 Tip</div>
+      Screenshot → AI Generator tab → Generate → Preview → Upload
+    </div>
+  </div>
+</aside>
+
+<main class="main">
+
+  <!-- PAGE 0: CONFIG -->
+  <div class="page active" id="page0">
+    <div>
+      <div class="panel-title">Azure DevOps <span>Configuration</span></div>
+      <div class="panel-sub">Connect to your AzDO org or load a saved profile</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">💾 Saved Profiles</div>
+      <div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap">
+        <select id="profileSelect" style="flex:1;max-width:280px" onchange="loadProfileOption()">
+          <option value="">— select a profile —</option>
+        </select>
+        <button class="btn btn-ghost btn-sm" onclick="refreshProfiles()">↻ Refresh</button>
+        <button class="btn btn-danger btn-sm" id="btnDeleteProfile" style="display:none" onclick="deleteProfile()">🗑 Delete</button>
+      </div>
+      <div id="profileMsg" style="font-size:12px;color:var(--success);margin-top:10px;display:none"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">🔌 Connection</div>
+      <div class="form-grid">
+        <div class="form-group"><label>Organization <span class="req">*</span></label><input id="cfgOrg" value="ViewpointVSO" placeholder="ViewpointVSO"/></div>
+        <div class="form-group"><label>Project <span class="req">*</span></label><input id="cfgProject" value="Platform Apps" placeholder="Platform Apps"/></div>
+        <div class="form-group full"><label>Personal Access Token <span class="req">*</span></label><input type="password" id="cfgPAT" placeholder="Sent to backend only — never stored in browser"/></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📋 Test Plan</div>
+      <div class="form-grid">
+        <div class="form-group"><label>Test Plan ID <span class="req">*</span></label><input type="number" id="cfgPlanId" value="624343" placeholder="624343"/></div>
+        <div class="form-group"><label>Story / Requirement ID <span class="req">*</span></label><input type="number" id="cfgStoryId" placeholder="678700"/></div>
+        <div class="form-group"><label>Parent Suite ID <span style="color:var(--muted)">(optional)</span></label><input type="number" id="cfgParentId" placeholder="685758"/></div>
+        <div class="form-group"><label>Parent Suite Name <span style="color:var(--muted)">(fallback)</span></label><input id="cfgParentName" placeholder="E2E Messenger Service"/></div>
+        <div class="form-group"><label>Desired State</label><select id="cfgState"><option value="Ready">Ready</option><option value="Design">Design</option><option value="Closed">Closed</option></select></div>
+        <div class="form-group"><label>Tags</label><input id="cfgTags" value="QA Testing; CoreServices"/></div>
+      </div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-primary btn-lg" onclick="saveConfig()">Save & Continue →</button>
+      <button class="btn btn-ghost" onclick="validateConnection()">🔗 Test Connection</button>
+      <button class="btn btn-ghost" onclick="openSaveProfileModal()">💾 Save Profile</button>
+      <button class="btn btn-ghost" onclick="loadDemo()">Load Demo</button>
+    </div>
+    <div id="connResult" style="font-family:var(--mono);font-size:12px;color:var(--muted);min-height:18px"></div>
+  </div>
+
+  <!-- PAGE 1: JSON EDITOR + INLINE AI GENERATOR -->
+  <div class="page" id="page1">
+    <div>
+      <div class="panel-title">Test Cases <span>JSON</span></div>
+      <div class="panel-sub">Paste JSON directly or generate test cases with AI — then preview & validate</div>
+    </div>
+
+    <!-- Input Mode Tabs -->
+    <div class="input-mode-tabs">
+      <div class="input-mode-tab active" id="modeTabAI" onclick="switchInputMode('ai')">
+        <span class="input-mode-icon">🤖</span> AI Generator
+      </div>
+      <div class="input-mode-tab" id="modeTabPaste" onclick="switchInputMode('paste')">
+        <span class="input-mode-icon">📋</span> Paste JSON
+      </div>
+    </div>
+
+    <!-- MODE: AI GENERATOR (inline) - shown first by default -->
+    <div id="inputModeAI">
+      <div class="card">
+        <div class="card-title">� Screenshot (optional but powerful)</div>
+        <div class="img-drop" id="imgDropInline" onclick="document.getElementById('imgInputInline').click()" ondrop="handleImgDropInline(event)" ondragover="handleDragOverInline(event)" ondragleave="handleDragLeaveInline(event)">
+          <div id="imgDropLabelInline">🖼 Click or drag & drop a screenshot here</div>
+          <img id="imgPreviewInline" class="img-preview" style="display:none"/>
+        </div>
+        <input type="file" id="imgInputInline" accept="image/*" style="display:none" onchange="handleImgSelectInline(event)"/>
+        <button class="btn btn-danger btn-sm" style="margin-top:8px;display:none" id="btnClearImgInline" onclick="clearImgInline()">✕ Remove Image</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📝 Describe the Feature</div>
+        <div class="form-grid">
+          <div class="form-group full">
+            <label>Feature / screen description <span class="req">*</span></label>
+            <textarea id="aiDescInline" placeholder="e.g. Login screen with email + password fields. Has 'Forgot Password' link and Google SSO. Shows inline validation on blur." style="min-height:90px"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Number of test cases</label>
+            <select id="aiCountInline">
+              <option value="3">3 — Quick</option>
+              <option value="5" selected>5 — Standard</option>
+              <option value="8">8 — Thorough</option>
+              <option value="12">12 — Comprehensive</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Extra context (optional)</label>
+            <input id="aiContextInline" placeholder="e.g. Mobile only; admin feature; SSO required"/>
+          </div>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn btn-purple btn-lg" id="btnGenerateInline" onclick="generateWithAIInline()">🤖 Generate Test Cases</button>
+        <span id="aiSpinnerInline" style="display:none;font-size:12px;font-family:var(--mono);color:var(--muted)">⏳ Calling AI…</span>
+      </div>
+
+      <div id="aiResultInline" class="card" style="display:none">
+        <div class="card-title">✨ Generated Test Cases</div>
+        <div id="aiResultMetaInline" style="margin-bottom:12px"></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>#</th><th>Title</th><th>Steps</th></tr></thead>
+            <tbody id="aiResultBodyInline"></tbody>
+          </table>
+        </div>
+        <div class="btn-row" style="margin-top:15px">
+          <button class="btn btn-primary" onclick="useAIResultInline()">Preview →</button>
+          <button class="btn btn-ghost" onclick="generateWithAIInline()">↻ Regenerate</button>
+          <button class="btn btn-ghost" onclick="loadAIResultToEditor()">📋 View in JSON Editor</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODE: PASTE JSON -->
+    <div id="inputModePaste" style="display:none">
+      <div class="card">
+        <div class="card-title">📄 Format Reference</div>
+        <div class="tabs">
+          <div class="tab active" onclick="switchTab(event,'tplJson')">JSON Template</div>
+          <div class="tab" onclick="switchTab(event,'tplPrompt')">AI Prompt</div>
+        </div>
+        <div id="tplJson"><div class="code-box">[
+  {
+    "title": "Verify user can send a message",
+    "preconditions": "User is logged in and on the Messenger screen",
+    "steps": [
+      { "action": "Click compose button",  "expected": "Input field becomes active" },
+      { "action": "Type 'Hello World'",    "expected": "Text appears in input" },
+      { "action": "Click Send",            "expected": "Message appears in chat" }
+    ]
+  }
+]</div></div>
+        <div id="tplPrompt" style="display:none"><div class="code-box">Generate test cases for the UI shown in the screenshot.
+Return ONLY a JSON array (no markdown, no backticks):
+
+[
+  {
+    "title": "short descriptive test name",
+    "preconditions": "required setup",
+    "steps": [
+      { "action": "tester action", "expected": "expected result" }
+    ]
+  }
+]
+
+Cover: happy path, validation errors, empty state, edge cases.</div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">✏️ JSON Editor</div>
+        <div class="json-toolbar">
+          <div id="jsonBadge" class="badge badge-warn">No JSON</div>
+          <div id="jsonCount" class="badge badge-blue" style="display:none"></div>
+          <div id="jsonValidBadge" style="display:none"></div>
+        </div>
+        <textarea id="jsonEditor" spellcheck="false" placeholder="Paste your JSON array here…"></textarea>
+        <div class="json-actions">
+          <button class="btn btn-ghost btn-sm" onclick="formatJSON()">🎨 Format</button>
+          <button class="btn btn-ghost btn-sm" onclick="clearJSON()">🗑 Clear</button>
+          <button class="btn btn-ghost btn-sm" onclick="loadSample()">📋 Sample</button>
+          <button class="btn btn-ghost btn-sm" onclick="apiValidate()">✅ Validate via API</button>
+          <button class="btn btn-primary" onclick="goToPreview()" style="margin-left:auto">Preview →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PAGE 2: PREVIEW -->
+  <div class="page" id="page2">
+    <div>
+      <div class="panel-title">Preview & <span>Validate</span></div>
+      <div class="panel-sub">Server-side validation — review before pushing to AzDO</div>
+    </div>
+
+    <div class="metric-grid">
+      <div class="metric-card"><div class="metric-label">Test Cases</div><div class="metric-value mv-blue" id="metricTotal">0</div></div>
+      <div class="metric-card"><div class="metric-label">Total Steps</div><div class="metric-value mv-blue" id="metricSteps">0</div></div>
+      <div class="metric-card"><div class="metric-label">Issues</div><div class="metric-value mv-green" id="metricIssues">—</div></div>
+    </div>
+
+    <div id="issuesBanner" class="card" style="display:none">
+      <div class="card-title">⚠️ Validation Issues</div>
+      <div id="issuesList" style="font-size:12px;font-family:var(--mono);line-height:2"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📊 Test Cases <span class="badge badge-blue" id="previewListCount" style="margin-left:auto;font-size:10px"></span></div>
+      <div id="previewList" class="preview-list"></div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="goTo(1)">← Back</button>
+      <button class="btn btn-ghost" onclick="syncEditsToJSON()">💾 Sync edits to JSON</button>
+      <button class="btn btn-success btn-lg" onclick="goTo(3)">Proceed to Upload →</button>
+    </div>
+  </div>
+
+  <!-- PAGE 3: UPLOAD -->
+  <div class="page" id="page3">
+    <div>
+      <div class="panel-title">Upload to <span>Azure DevOps</span></div>
+      <div class="panel-sub">PAT goes to your backend only — never transmitted by the browser directly</div>
+    </div>
+
+    <div class="metric-grid">
+      <div class="metric-card"><div class="metric-label">Organization</div><div class="metric-value" id="upOrg" style="font-size:15px;color:var(--text)">—</div></div>
+      <div class="metric-card"><div class="metric-label">Test Plan</div><div class="metric-value mv-blue" id="upPlan">—</div></div>
+      <div class="metric-card"><div class="metric-label">Cases to Upload</div><div class="metric-value mv-blue" id="upCount">—</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">🚀 Streaming Progress</div>
+      <div class="progress-wrap"><div class="progress-bar" id="progressBar" style="width:0%"></div></div>
+      <div class="progress-text" id="progressText">Ready to upload</div>
+      <div class="log-wrap" id="logWrap"><div style="color:var(--muted);font-style:italic">Logs appear here in real-time…</div></div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="goTo(2)" id="btnBack3">← Back</button>
+      <button class="btn btn-success btn-lg" id="btnUpload" onclick="startUpload()">⚡ Start Upload</button>
+      <button class="btn btn-ghost" id="btnReset" style="display:none" onclick="resetUpload()">🔄 New Upload</button>
+    </div>
+  </div>
+
+  <!-- PAGE 4: AI GENERATOR (redirect to inline) -->
+  <div class="page" id="page4">
+    <div>
+      <div class="panel-title">AI Test Case <span>Generator</span></div>
+      <div class="panel-sub">The AI Generator is now built into the Test Cases JSON step</div>
+    </div>
+
+    <div class="card" style="text-align:center;padding:40px 20px">
+      <div style="font-size:42px;margin-bottom:16px">🤖</div>
+      <div style="font-size:15px;font-weight:700;margin-bottom:8px">AI Generator has moved!</div>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:20px;max-width:420px;margin-left:auto;margin-right:auto">
+        The AI Generator is now integrated directly into the <strong>Test Cases JSON</strong> step.
+        You can paste JSON manually or generate test cases with AI — all in one place.
+      </p>
+      <button class="btn btn-purple btn-lg" onclick="goTo(1);switchInputMode('ai')">Go to AI Generator →</button>
+    </div>
+  </div>
+
+  <!-- PAGE 5: HISTORY -->
+  <div class="page" id="page5">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+      <div>
+        <div class="panel-title">Upload <span>History</span></div>
+        <div class="panel-sub">Stored by the backend — click a row to view full logs</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="loadHistory()">↻ Refresh</button>
+    </div>
+    <div id="historyList"><div style="color:var(--muted);font-size:13px">Loading…</div></div>
+  </div>
+
+</main>
+</div>
+
+<!-- SAVE PROFILE MODAL -->
+<div class="modal-bg" id="saveProfileModal">
+  <div class="modal">
+    <div class="modal-title">Save <span>Profile</span></div>
+    <div class="form-group" style="margin-bottom:18px">
+      <label>Profile Name</label>
+      <input id="profileNameInput" placeholder="e.g. Platform Apps – E2E Suite"/>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="saveProfile()">Save</button>
+      <button class="btn btn-ghost" onclick="closeModal('saveProfileModal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- HISTORY LOG MODAL -->
+<div class="modal-bg" id="historyModal">
+  <div class="modal" style="width:660px">
+    <div class="modal-title" id="historyModalTitle">Upload <span>Logs</span></div>
+    <div class="log-wrap" id="historyModalLog" style="max-height:340px;margin-bottom:18px"></div>
+    <button class="btn btn-ghost" onclick="closeModal('historyModal')">Close</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="js/app.js"></script>
+</body>
+</html>

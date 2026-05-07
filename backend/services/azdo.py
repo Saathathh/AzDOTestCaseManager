@@ -5,6 +5,17 @@ from typing import Optional, List, Tuple
 from models.schemas import AzdoConfig, TestCase
 
 
+# Shared async HTTP client with connection pooling
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=30, limits=httpx.Limits(max_connections=20))
+    return _http_client
+
+
 def _make_headers(pat: str, content_type: str = "application/json") -> dict:
     auth = base64.b64encode(f":{pat}".encode()).decode()
     return {"Content-Type": content_type, "Authorization": f"Basic {auth}"}
@@ -34,8 +45,8 @@ def _steps_xml(steps) -> str:
 
 async def fetch_suites(cfg: AzdoConfig) -> list:
     url = f"{_base_url(cfg)}/_apis/testplan/Plans/{cfg.plan_id}/suites?api-version=7.0"
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(url, headers=_make_headers(cfg.pat))
+    client = _get_client()
+    resp = await client.get(url, headers=_make_headers(cfg.pat))
     resp.raise_for_status()
     return resp.json().get("value", [])
 
@@ -69,8 +80,8 @@ async def create_requirement_suite(cfg: AzdoConfig, parent_suite_id: int) -> int
         "requirementId": cfg.story_id,
         "parentSuite": {"id": parent_suite_id},
     }
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(url, headers=_make_headers(cfg.pat), json=body)
+    client = _get_client()
+    resp = await client.post(url, headers=_make_headers(cfg.pat), json=body)
     resp.raise_for_status()
     return resp.json()["id"]
 
@@ -80,8 +91,8 @@ async def create_requirement_suite(cfg: AzdoConfig, parent_suite_id: int) -> int
 async def resolve_state(cfg: AzdoConfig) -> Optional[str]:
     url = f"{_base_url(cfg)}/_apis/wit/workitemtypes/Test%20Case/states?api-version=7.0"
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(url, headers=_make_headers(cfg.pat))
+        client = _get_client()
+        resp = await client.get(url, headers=_make_headers(cfg.pat))
         resp.raise_for_status()
         states = [s["name"] for s in resp.json().get("value", [])]
         if cfg.desired_state in states:
@@ -104,12 +115,12 @@ async def create_test_case(cfg: AzdoConfig, tc: TestCase, state: Optional[str] =
         {"op": "add", "path": "/fields/Microsoft.VSTS.TCM.Steps",       "value": _steps_xml(tc.steps)},
         {"op": "add", "path": "/fields/System.Tags",                    "value": cfg.tags},
     ]
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            url,
-            headers=_make_headers(cfg.pat, "application/json-patch+json"),
-            json=body,
-        )
+    client = _get_client()
+    resp = await client.post(
+        url,
+        headers=_make_headers(cfg.pat, "application/json-patch+json"),
+        json=body,
+    )
     resp.raise_for_status()
     tc_id = resp.json()["id"]
     logs.append(f"✅ Created: \"{tc.title}\" (ID: {tc_id})")
@@ -128,12 +139,12 @@ async def create_test_case(cfg: AzdoConfig, tc: TestCase, state: Optional[str] =
 async def _set_state(cfg: AzdoConfig, tc_id: int, state: str):
     url = f"{_base_url(cfg)}/_apis/wit/workitems/{tc_id}?api-version=7.0"
     body = [{"op": "add", "path": "/fields/System.State", "value": state}]
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.patch(
-            url,
-            headers=_make_headers(cfg.pat, "application/json-patch+json"),
-            json=body,
-        )
+    client = _get_client()
+    resp = await client.patch(
+        url,
+        headers=_make_headers(cfg.pat, "application/json-patch+json"),
+        json=body,
+    )
     resp.raise_for_status()
 
 
@@ -142,6 +153,6 @@ async def add_test_case_to_suite(cfg: AzdoConfig, suite_id: int, tc_id: int) -> 
         f"{_base_url(cfg)}/_apis/test/plans/{cfg.plan_id}"
         f"/suites/{suite_id}/testcases/{tc_id}?api-version=7.0"
     )
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(url, headers=_make_headers(cfg.pat))
+    client = _get_client()
+    resp = await client.post(url, headers=_make_headers(cfg.pat))
     return resp.status_code in (200, 201)

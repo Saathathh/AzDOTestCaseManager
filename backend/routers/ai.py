@@ -1,12 +1,19 @@
 import os
 import json
 import anthropic
-from openai import OpenAI
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from openai import AsyncOpenAI
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
 from typing import Optional
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from models.schemas import AIGenerateRequest
 
 router = APIRouter()
+
+limiter = Limiter(key_func=get_remote_address)
+
+# Max image size: 10 MB
+MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024
 
 # ── Provider config ──────────────────────────────────────
 # AI_PROVIDER: "anthropic" or "nvidia"
@@ -396,7 +403,8 @@ def _build_user_message(req: AIGenerateRequest) -> list:
 
 
 @router.post("/generate")
-async def generate_testcases(req: AIGenerateRequest):
+@limiter.limit("10/minute")
+async def generate_testcases(request: Request, req: AIGenerateRequest):
     """
     Generate test cases using AI (Anthropic Claude or NVIDIA NIM).
     Set AI_PROVIDER env var to 'nvidia' and NVIDIA_API_KEY to use NVIDIA.
@@ -405,6 +413,13 @@ async def generate_testcases(req: AIGenerateRequest):
         raise HTTPException(
             status_code=400,
             detail="Provide at least a description or an image."
+        )
+
+    # Validate image size (base64 is ~33% larger than raw bytes)
+    if req.image_base64 and len(req.image_base64) > MAX_IMAGE_SIZE_BYTES * 1.34:
+        raise HTTPException(
+            status_code=413,
+            detail="Image too large. Maximum size is 10 MB."
         )
 
     if AI_PROVIDER == "nvidia":
@@ -421,8 +436,8 @@ async def _generate_anthropic(req: AIGenerateRequest):
         )
     try:
         system_prompt = _get_system_prompt(req.test_type)
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        message = client.messages.create(
+        client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+        message = await client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=8192,
             system=system_prompt,
@@ -456,7 +471,7 @@ async def _generate_nvidia(req: AIGenerateRequest):
         )
     try:
         system_prompt = _get_system_prompt(req.test_type)
-        client = OpenAI(api_key=NVIDIA_API_KEY, base_url=NVIDIA_BASE_URL)
+        client = AsyncOpenAI(api_key=NVIDIA_API_KEY, base_url=NVIDIA_BASE_URL)
 
         # Use vision model if image is provided, otherwise text model
         model = NVIDIA_VISION_MODEL if req.image_base64 else NVIDIA_MODEL
@@ -464,7 +479,7 @@ async def _generate_nvidia(req: AIGenerateRequest):
         # Build message content for OpenAI-compatible API
         user_content = _build_nvidia_user_content(req)
 
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model=model,
             max_tokens=8192,
             messages=[
@@ -556,7 +571,9 @@ def _parse_json_response(raw: str) -> list:
 
 
 @router.post("/generate-from-image")
+@limiter.limit("10/minute")
 async def generate_from_image(
+    request: Request,
     image: UploadFile = File(...),
     description: str = Form(""),
     count: int = Form(5),
@@ -568,6 +585,10 @@ async def generate_from_image(
     """
     import base64
     img_bytes = await image.read()
+
+    if len(img_bytes) > MAX_IMAGE_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail="Image too large. Maximum size is 10 MB.")
+
     img_b64 = base64.b64encode(img_bytes).decode()
 
     media_type = image.content_type or "image/png"

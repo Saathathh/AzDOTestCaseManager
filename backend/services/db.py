@@ -10,6 +10,8 @@ DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "azdo_manager
 
 async def init_db() -> None:
     async with aiosqlite.connect(DB_PATH) as db:
+        # Enable WAL mode for better concurrent read/write performance
+        await db.execute("PRAGMA journal_mode=WAL")
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS profiles (

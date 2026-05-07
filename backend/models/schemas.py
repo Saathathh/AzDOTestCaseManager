@@ -40,7 +40,8 @@ class AIGenerateRequest(BaseModel):
     description: Optional[str] = None
     image_base64: Optional[str] = None
     image_media_type: Optional[str] = None
-    count: int = Field(default=5, ge=1, le=50)
+    count: int = Field(default=0, ge=0, le=50)
+    test_type: str = "ui"
     context: Optional[str] = None
 
 

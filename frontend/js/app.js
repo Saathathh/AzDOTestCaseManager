@@ -20,9 +20,14 @@ window.addEventListener('load', () => { pingBackend(); refreshProfiles(); });
 document.getElementById('jsonEditor').addEventListener('input', validateJSONLive);
 
 // ── NAVIGATION ──────────────────────────────────────────
+let uploadCompleted = false;
 function goTo(n) {
   if (n>0 && n<4 && !config.org) { showToast('⚠️ Save configuration first','warn'); return; }
   if ((n===2||n===3) && !testcases.length) { showToast('⚠️ Load test cases first','warn'); return; }
+  if (uploadCompleted && n!==3) {
+    showToast('🎉 New upload completed! Starting fresh workflow.','info');
+    uploadCompleted = false;
+  }
   document.querySelectorAll('.page').forEach((p,i) => p.classList.toggle('active', i===n));
   for(let i=0;i<6;i++){
     const si=document.getElementById(`step${i}`), sn=document.getElementById(`snum${i}`);
@@ -375,7 +380,7 @@ function enterEditMode(idx){
     autoGrow(ta);
   });
   // Show delete buttons
-  panel.querySelectorAll('.step-delete').forEach(el=>el.style.display='inline-flex');
+  panel.querySelectorAll('.step-delete').forEach(el=>{el.style.display='inline-flex'; el.style.opacity='1';});
   // Toggle buttons
   document.getElementById(`btnEditTC-${idx}`).style.display='none';
   document.getElementById(`btnSaveTC-${idx}`).style.display='inline-flex';
@@ -464,6 +469,7 @@ function fillUploadSummary(){
   document.getElementById('upOrg').textContent   = config.org||'—';
   document.getElementById('upPlan').textContent  = config.plan_id||'—';
   document.getElementById('upCount').textContent = testcases.length;
+  document.getElementById('upParentSuite').textContent = config.parent_suite_id ? `${config.parent_suite_id} — ${config.parent_suite_name||'N/A'}` : '—';
 }
 
 async function startUpload(){
@@ -491,7 +497,7 @@ async function startUpload(){
           const ev=JSON.parse(line.slice(6));
           if(ev.progress!=null) setProgress(ev.progress, ev.message);
           if(ev.type&&ev.type!=='done'&&ev.type!=='progress') log(ev.type, ev.message);
-          if(ev.type==='done'){ document.getElementById('btnReset').style.display='inline-flex'; showToast('🎉 Upload complete!','ok'); }
+          if(ev.type==='done'){ document.getElementById('btnReset').style.display='inline-flex'; uploadCompleted=true; showToast('🎉 Upload complete!','ok'); }
         } catch {}
       }
     }
@@ -583,8 +589,8 @@ async function generateWithAIInline(){
   try {
     const r=await fetch(`${API()}/api/ai/generate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       description:desc, image_base64:imgBase64, image_media_type:imgMediaType,
-      count:parseInt(document.getElementById('aiCountInline').value),
-      context:document.getElementById('aiContextInline').value.trim()||null
+      count:parseInt(document.getElementById('aiCountInline').value)||0,
+      test_type:document.getElementById('aiTestTypeInline').value
     })});
     const d=await r.json();
     if(!r.ok) throw new Error(d.detail||'AI generation failed');

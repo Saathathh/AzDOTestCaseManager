@@ -540,7 +540,7 @@ tr:hover td { background: rgba(0, 212, 255, .02); }
 .step-delete {
   margin-top: 3px; flex-shrink: 0; opacity: 0; transition: opacity .15s;
 }
-.step-row:hover .step-delete { opacity: 1; }
+.step-table-row:hover .step-delete { opacity: 1; }
 .detail-actions {
   margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border);
   display: flex; justify-content: flex-end;

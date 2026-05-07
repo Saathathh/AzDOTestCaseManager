@@ -159,6 +159,7 @@
           <div class="form-group">
             <label>Number of test cases</label>
             <select id="aiCountInline">
+              <option value="0">Auto — Based on scenario</option>
               <option value="3">3 — Quick</option>
               <option value="5" selected>5 — Standard</option>
               <option value="8">8 — Thorough</option>
@@ -166,8 +167,12 @@
             </select>
           </div>
           <div class="form-group">
-            <label>Extra context (optional)</label>
-            <input id="aiContextInline" placeholder="e.g. Mobile only; admin feature; SSO required"/>
+            <label>Test Type</label>
+            <select id="aiTestTypeInline">
+              <option value="ui" selected>UI — Web application testing</option>
+              <option value="swagger">Swagger — API from Swagger UI</option>
+              <option value="postman">Postman — API collection testing</option>
+            </select>
           </div>
         </div>
       </div>
@@ -285,9 +290,10 @@ Cover: happy path, validation errors, empty state, edge cases.</div></div>
       <div class="panel-sub">PAT goes to your backend only — never transmitted by the browser directly</div>
     </div>
 
-    <div class="metric-grid">
+    <div class="metric-grid" style="grid-template-columns:repeat(2,1fr)">
       <div class="metric-card"><div class="metric-label">Organization</div><div class="metric-value" id="upOrg" style="font-size:15px;color:var(--text)">—</div></div>
       <div class="metric-card"><div class="metric-label">Test Plan</div><div class="metric-value mv-blue" id="upPlan">—</div></div>
+      <div class="metric-card"><div class="metric-label">Parent Suite</div><div class="metric-value" id="upParentSuite" style="font-size:14px;color:var(--text)">—</div></div>
       <div class="metric-card"><div class="metric-label">Cases to Upload</div><div class="metric-value mv-blue" id="upCount">—</div></div>
     </div>
 

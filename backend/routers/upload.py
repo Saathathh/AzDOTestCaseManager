@@ -52,8 +52,8 @@ async def _upload_stream(req: UploadRequest):
     # ── STEP 3: Create requirement suite ─────────────────
     yield event("info", f"Creating requirement suite for story {cfg.story_id}…", 20)
     try:
-        suite_id = await azdo.create_requirement_suite(cfg, parent_id)
-        yield event("ok", f"Requirement suite created (ID: {suite_id})", 25)
+        suite_id = await azdo.create_requirement_suite(cfg, parent_id, suites)
+        yield event("ok", f"Requirement suite ready (ID: {suite_id})", 25)
     except Exception as e:
         yield event("err", f"Failed to create suite: {e}", 0)
         yield event("done", "Upload aborted")

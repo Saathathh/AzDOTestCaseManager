@@ -73,7 +73,18 @@ async def resolve_parent_suite_id(cfg: AzdoConfig, suites: list) -> int:
     raise ValueError("Could not resolve a parent suite")
 
 
-async def create_requirement_suite(cfg: AzdoConfig, parent_suite_id: int) -> int:
+async def create_requirement_suite(cfg: AzdoConfig, parent_suite_id: int, suites: list = None) -> int:
+    # Check if a requirement suite for this story already exists
+    if suites:
+        existing = next(
+            (s for s in suites
+             if (s.get("suiteType") or "").lower() == "requirementtestsuite"
+             and s.get("requirementId") == cfg.story_id),
+            None,
+        )
+        if existing:
+            return existing["id"]
+
     url = f"{_base_url(cfg)}/_apis/testplan/Plans/{cfg.plan_id}/suites?api-version=7.0"
     body = {
         "suiteType": "requirementTestSuite",

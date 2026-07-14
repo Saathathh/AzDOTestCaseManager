@@ -52,7 +52,8 @@ function getFormConfig(){
     project: document.getElementById('cfgProject').value.trim(),
     pat: document.getElementById('cfgPAT').value.trim(),
     plan_id: parseInt(document.getElementById('cfgPlanId').value)||0,
-    story_id: parseInt(document.getElementById('cfgStoryId').value)||0,
+    story_id: parseInt(document.getElementById('cfgStoryId').value)||null,
+    target_suite_name: document.getElementById('cfgTargetSuiteName').value.trim()||null,
     parent_suite_id: parseInt(document.getElementById('cfgParentId').value)||null,
     parent_suite_name: document.getElementById('cfgParentName').value.trim()||null,
     desired_state: document.getElementById('cfgState').value,
@@ -62,7 +63,10 @@ function getFormConfig(){
 
 function saveConfig(){
   const c=getFormConfig();
-  if(!c.org||!c.project||!c.pat||!c.plan_id||!c.story_id){ showToast('❌ Fill all required fields','error'); return; }
+  if(!c.org||!c.project||!c.pat||!c.plan_id){ showToast('❌ Fill all required fields','error'); return; }
+  if(!c.story_id && !c.target_suite_name){
+    showToast('ℹ️ Story ID and Target Suite Name are empty. Add one before upload.','info');
+  }
   config=c; showToast('✅ Configuration saved','ok'); goTo(1);
 }
 
@@ -72,6 +76,7 @@ function loadDemo(){
   document.getElementById('cfgPAT').value='replace-with-your-pat';
   document.getElementById('cfgPlanId').value='624343';
   document.getElementById('cfgStoryId').value='678700';
+  document.getElementById('cfgTargetSuiteName').value='test';
   document.getElementById('cfgParentId').value='685758';
   document.getElementById('cfgParentName').value='E2E Messenger Service';
   document.getElementById('cfgTags').value='QA Testing; CoreServices';
@@ -114,6 +119,7 @@ async function loadProfileOption(){
     document.getElementById('cfgPAT').value        = '';
     document.getElementById('cfgPlanId').value     = d.plan_id||'';
     document.getElementById('cfgStoryId').value    = d.story_id||'';
+    document.getElementById('cfgTargetSuiteName').value = d.target_suite_name||'';
     document.getElementById('cfgParentId').value   = d.parent_suite_id||'';
     document.getElementById('cfgParentName').value = d.parent_suite_name||'';
     document.getElementById('cfgState').value      = d.desired_state||'Ready';
@@ -152,14 +158,20 @@ async function deleteProfile(){
 function switchInputMode(mode){
   const pastePane = document.getElementById('inputModePaste');
   const aiPane = document.getElementById('inputModeAI');
+  const storyPane = document.getElementById('inputModeStory');
   const tabPaste = document.getElementById('modeTabPaste');
   const tabAI = document.getElementById('modeTabAI');
+  const tabStory = document.getElementById('modeTabStory');
+  // Hide all
+  aiPane.style.display='none'; pastePane.style.display='none'; storyPane.style.display='none';
+  tabAI.classList.remove('active'); tabPaste.classList.remove('active'); tabStory.classList.remove('active');
+  // Show selected
   if(mode==='paste'){
-    aiPane.style.display='none'; pastePane.style.display='';
-    tabAI.classList.remove('active'); tabPaste.classList.add('active');
+    pastePane.style.display=''; tabPaste.classList.add('active');
+  } else if(mode==='story'){
+    storyPane.style.display=''; tabStory.classList.add('active');
   } else {
-    aiPane.style.display=''; pastePane.style.display='none';
-    tabAI.classList.add('active'); tabPaste.classList.remove('active');
+    aiPane.style.display=''; tabAI.classList.add('active');
   }
 }
 
@@ -469,7 +481,9 @@ function fillUploadSummary(){
   document.getElementById('upOrg').textContent   = config.org||'—';
   document.getElementById('upPlan').textContent  = config.plan_id||'—';
   document.getElementById('upCount').textContent = testcases.length;
-  document.getElementById('upParentSuite').textContent = config.parent_suite_id ? `${config.parent_suite_id} — ${config.parent_suite_name||'N/A'}` : '—';
+  const parentSuite = config.parent_suite_id ? `${config.parent_suite_id} — ${config.parent_suite_name||'N/A'}` : (config.parent_suite_name||'root/auto');
+  const target = config.story_id ? `Story ${config.story_id}` : `Suite ${config.target_suite_name||'N/A'}`;
+  document.getElementById('upParentSuite').textContent = `${parentSuite} | ${target}`;
 }
 
 async function startUpload(){
@@ -619,6 +633,91 @@ function useAIResultInline(){
 
 function loadAIResultToEditor(){
   testcases=aiGeneratedCases;
+  document.getElementById('jsonEditor').value=JSON.stringify(testcases,null,2);
+  validateJSONLive();
+  switchInputMode('paste');
+  showToast('✅ Loaded into JSON editor','ok');
+}
+
+// ── USER STORY → TEST CASES ────────────────────────────
+let storyGeneratedCases=[];
+
+async function fetchUserStory(){
+  const wiId=parseInt(document.getElementById('cfgStoryId').value)||0;
+  if(!wiId){ showToast('❌ Enter Story ID in Configuration page','error'); return; }
+  const org=document.getElementById('cfgOrg').value.trim();
+  const project=document.getElementById('cfgProject').value.trim();
+  const pat=document.getElementById('cfgPAT').value.trim();
+  if(!org||!project||!pat){ showToast('❌ Fill in Organization, Project, and PAT on Configuration page first','error'); return; }
+
+  const btn=document.getElementById('btnFetchStory');
+  btn.disabled=true; btn.textContent='⏳ Fetching…';
+  try {
+    const fetchResp=await fetch(`${API()}/api/ai/fetch-workitem`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      org, project, pat, work_item_id:wiId
+    })});
+    const d=await fetchResp.json();
+    if(!fetchResp.ok) throw new Error(d.detail||'Could not fetch work item');
+
+    // Show preview
+    const card=document.getElementById('storyPreviewCard');
+    card.style.display='block';
+    const content=document.getElementById('storyPreviewContent');
+    let html=`<div style="margin-bottom:8px"><span class="badge badge-blue">${esc(d.work_item_type)}</span> <span class="badge badge-green">${esc(d.state)}</span> <strong style="margin-left:6px">#${d.id} — ${esc(d.title)}</strong></div>`;
+    if(d.description) html+=`<div style="margin-bottom:8px"><strong>Description:</strong><div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:10px;margin-top:4px;font-size:12px;max-height:150px;overflow-y:auto">${d.description}</div></div>`;
+    if(d.acceptance_criteria) html+=`<div><strong>Acceptance Criteria:</strong><div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:10px;margin-top:4px;font-size:12px;max-height:150px;overflow-y:auto">${d.acceptance_criteria}</div></div>`;
+    if(!d.description&&!d.acceptance_criteria) html+=`<div style="color:var(--danger)">⚠️ This work item has no description or acceptance criteria.</div>`;
+    content.innerHTML=html;
+    showToast(`✅ Fetched: ${d.title}`,'ok');
+  } catch(e){ showToast(`❌ ${e.message}`,'error'); document.getElementById('storyPreviewCard').style.display='none'; }
+  finally { btn.disabled=false; btn.textContent='🔍 Fetch Story'; }
+}
+
+async function generateFromUserStory(){
+  const wiId=parseInt(document.getElementById('cfgStoryId').value)||0;
+  if(!wiId){ showToast('❌ Enter Story ID in Configuration page','error'); return; }
+  const org=document.getElementById('cfgOrg').value.trim();
+  const project=document.getElementById('cfgProject').value.trim();
+  const pat=document.getElementById('cfgPAT').value.trim();
+  if(!org||!project||!pat){ showToast('❌ Fill in Configuration first','error'); return; }
+
+  const btn=document.getElementById('btnGenerateFromStory'), spinner=document.getElementById('storySpinner');
+  btn.disabled=true; spinner.style.display='inline'; document.getElementById('storyResultCard').style.display='none';
+  try {
+    const r=await fetch(`${API()}/api/ai/generate-from-userstory`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      org, project, pat, work_item_id:wiId,
+      count:parseInt(document.getElementById('storyCountSelect').value)||0,
+      test_type:document.getElementById('storyTestType').value
+    })});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.detail||'Generation failed');
+    storyGeneratedCases=d.testcases;
+    renderStoryResult(d);
+    showToast(`🤖 ${d.count} test cases generated from user story`,'ok');
+  } catch(e){ showToast(`❌ ${e.message}`,'error'); }
+  finally { btn.disabled=false; spinner.style.display='none'; }
+}
+
+function renderStoryResult(d){
+  document.getElementById('storyResultCard').style.display='block';
+  document.getElementById('storyResultMeta').innerHTML=`<span class="badge badge-green">${d.count} generated</span> <span class="badge badge-blue" style="margin-left:5px">${d.model}</span> <span class="badge badge-purple" style="margin-left:5px">${d.tokens_used} tokens</span>`;
+  const body=document.getElementById('storyResultBody'); body.innerHTML='';
+  d.testcases.forEach((tc,i)=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td style="color:var(--muted)">${i+1}</td><td style="font-weight:600;max-width:300px">${esc(tc.title)}</td><td><span class="badge badge-purple">${(tc.steps||[]).length} steps</span></td>`;
+    body.appendChild(tr);
+  });
+}
+
+function useStoryResult(){
+  testcases=storyGeneratedCases;
+  document.getElementById('jsonEditor').value=JSON.stringify(testcases,null,2);
+  validateJSONLive();
+  goToPreview();
+}
+
+function loadStoryResultToEditor(){
+  testcases=storyGeneratedCases;
   document.getElementById('jsonEditor').value=JSON.stringify(testcases,null,2);
   validateJSONLive();
   switchInputMode('paste');

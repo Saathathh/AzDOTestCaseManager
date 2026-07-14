@@ -103,7 +103,8 @@
       <div class="card-title">📋 Test Plan</div>
       <div class="form-grid">
         <div class="form-group"><label>Test Plan ID <span class="req">*</span></label><input type="number" id="cfgPlanId" value="624343" placeholder="624343"/></div>
-        <div class="form-group"><label>Story / Requirement ID <span class="req">*</span></label><input type="number" id="cfgStoryId" placeholder="678700"/></div>
+        <div class="form-group"><label>Story / Requirement ID <span style="color:var(--muted)">(optional)</span></label><input type="number" id="cfgStoryId" placeholder="678700"/></div>
+        <div class="form-group"><label>Target Suite Name <span style="color:var(--muted)">(required if Story ID is empty)</span></label><input id="cfgTargetSuiteName" placeholder="test"/></div>
         <div class="form-group"><label>Parent Suite ID <span style="color:var(--muted)">(optional)</span></label><input type="number" id="cfgParentId" placeholder="685758"/></div>
         <div class="form-group"><label>Parent Suite Name <span style="color:var(--muted)">(fallback)</span></label><input id="cfgParentName" placeholder="E2E Messenger Service"/></div>
         <div class="form-group"><label>Desired State</label><select id="cfgState"><option value="Ready">Ready</option><option value="Design">Design</option><option value="Closed">Closed</option></select></div>
@@ -131,6 +132,9 @@
     <div class="input-mode-tabs">
       <div class="input-mode-tab active" id="modeTabAI" onclick="switchInputMode('ai')">
         <span class="input-mode-icon">🤖</span> AI Generator
+      </div>
+      <div class="input-mode-tab" id="modeTabStory" onclick="switchInputMode('story')">
+        <span class="input-mode-icon">📖</span> From User Story
       </div>
       <div class="input-mode-tab" id="modeTabPaste" onclick="switchInputMode('paste')">
         <span class="input-mode-icon">📋</span> Paste JSON
@@ -195,6 +199,62 @@
           <button class="btn btn-primary" onclick="useAIResultInline()">Preview →</button>
           <button class="btn btn-ghost" onclick="generateWithAIInline()">↻ Regenerate</button>
           <button class="btn btn-ghost" onclick="loadAIResultToEditor()">📋 View in JSON Editor</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODE: FROM USER STORY -->
+    <div id="inputModeStory" style="display:none">
+      <div class="card">
+        <div class="card-title">📖 Fetch User Story from Azure DevOps</div>
+        <div class="panel-sub" style="margin-bottom:14px">Uses Story / Requirement ID from Configuration page to fetch description and acceptance criteria.</div>
+        <div class="btn-row">
+          <button class="btn btn-ghost" id="btnFetchStory" onclick="fetchUserStory()">🔍 Fetch Story</button>
+        </div>
+      </div>
+
+      <div id="storyPreviewCard" class="card" style="display:none">
+        <div class="card-title">📋 User Story Details</div>
+        <div id="storyPreviewContent" style="font-size:13px;line-height:1.7"></div>
+        <div class="form-grid" style="margin-top:16px">
+          <div class="form-group">
+            <label>Number of test cases</label>
+            <select id="storyCountSelect">
+              <option value="0">Auto — Based on criteria</option>
+              <option value="5">5 — Standard</option>
+              <option value="8">8 — Thorough</option>
+              <option value="12" selected>12 — Comprehensive</option>
+              <option value="20">20 — Exhaustive</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Test Type</label>
+            <select id="storyTestType">
+              <option value="ui" selected>UI — Web application testing</option>
+              <option value="swagger">Swagger — API testing</option>
+              <option value="postman">Postman — API collection testing</option>
+            </select>
+          </div>
+        </div>
+        <div class="btn-row" style="margin-top:14px">
+          <button class="btn btn-purple btn-lg" id="btnGenerateFromStory" onclick="generateFromUserStory()">🤖 Generate Test Cases</button>
+          <span id="storySpinner" style="display:none;font-size:12px;font-family:var(--mono);color:var(--muted)">⏳ Generating…</span>
+        </div>
+      </div>
+
+      <div id="storyResultCard" class="card" style="display:none">
+        <div class="card-title">✨ Generated Test Cases</div>
+        <div id="storyResultMeta" style="margin-bottom:12px"></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>#</th><th>Title</th><th>Steps</th></tr></thead>
+            <tbody id="storyResultBody"></tbody>
+          </table>
+        </div>
+        <div class="btn-row" style="margin-top:15px">
+          <button class="btn btn-primary" onclick="useStoryResult()">Preview →</button>
+          <button class="btn btn-ghost" onclick="generateFromUserStory()">↻ Regenerate</button>
+          <button class="btn btn-ghost" onclick="loadStoryResultToEditor()">📋 View in JSON Editor</button>
         </div>
       </div>
     </div>
@@ -370,6 +430,6 @@ Cover: happy path, validation errors, empty state, edge cases.</div></div>
 
 <div id="toast"></div>
 
-<script src="js/app.js"></script>
+<script src="js/app.js?v=20260714-2"></script>
 </body>
 </html>

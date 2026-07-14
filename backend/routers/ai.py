@@ -6,7 +6,9 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
 from typing import Optional
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from models.schemas import AIGenerateRequest
+from pydantic import BaseModel
+from models.schemas import AIGenerateRequest, UserStoryGenerateRequest
+from services.azdo import fetch_work_item
 
 router = APIRouter()
 
@@ -600,3 +602,194 @@ async def generate_from_image(
         test_type=test_type,
     )
     return await generate_testcases(req)
+
+
+# ── USER STORY → TEST CASES ─────────────────────────────
+
+
+class FetchWorkItemRequest(BaseModel):
+    org: str
+    project: str
+    pat: str
+    work_item_id: int
+
+
+@router.post("/fetch-workitem")
+async def fetch_workitem_endpoint(req: FetchWorkItemRequest):
+    """Fetch work item details (title, description, acceptance criteria) from AzDO."""
+    try:
+        work_item = await fetch_work_item(req.org, req.project, req.pat, req.work_item_id)
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not fetch work item {req.work_item_id}: {e}"
+        )
+    return work_item
+
+
+SYSTEM_PROMPT_USER_STORY = """
+You are a Senior QA Engineer generating test cases from an Azure DevOps User Story.
+
+You will receive:
+1. The user story title
+2. The description (context about what/why/who)
+3. The acceptance criteria (conditions for completion)
+
+Your task is to generate comprehensive test cases that validate ALL acceptance criteria and cover reasonable edge cases.
+
+STRICT RULES:
+
+1. FORMAT:
+* Output must be ONLY a valid JSON array.
+* Structure:
+  [
+    {
+      "title": "...",
+      "preconditions": "...",
+      "steps": [
+        { "action": "...", "expected": "..." }
+      ]
+    }
+  ]
+
+2. COVERAGE:
+* Generate at least one test case per acceptance criterion
+* Include positive scenarios (happy path)
+* Include negative scenarios (invalid inputs, error states)
+* Include edge cases (boundary values, empty states)
+* Cover error handling and validation
+
+3. TITLE FORMAT:
+* Use descriptive titles: "<Feature Area> - <Scenario>"
+
+4. STEPS:
+* Each test case must have clear, actionable steps
+* Each step must have both action and expected result
+* Steps should be specific and testable
+* Use realistic QA language
+
+5. PRECONDITIONS:
+* Describe the required setup state before testing
+
+6. BEHAVIOR:
+* Do NOT output anything outside the JSON array
+* Do NOT use markdown fences
+* Do NOT skip acceptance criteria
+* Make test cases independent of each other
+* Keep steps concise but unambiguous
+"""
+
+
+@router.post("/generate-from-userstory")
+@limiter.limit("10/minute")
+async def generate_from_userstory(request: Request, req: UserStoryGenerateRequest):
+    """
+    Fetch a user story from Azure DevOps and generate test cases from its
+    description and acceptance criteria.
+    """
+    # Fetch work item from AzDO
+    try:
+        work_item = await fetch_work_item(req.org, req.project, req.pat, req.work_item_id)
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not fetch work item {req.work_item_id}: {e}"
+        )
+
+    if not work_item.get("description") and not work_item.get("acceptance_criteria"):
+        raise HTTPException(
+            status_code=400,
+            detail="Work item has no description or acceptance criteria to generate test cases from."
+        )
+
+    # Build prompt from work item fields
+    user_prompt_parts = []
+    user_prompt_parts.append(f"User Story Title: {work_item['title']}")
+    if work_item.get("description"):
+        user_prompt_parts.append(f"\nDescription:\n{work_item['description']}")
+    if work_item.get("acceptance_criteria"):
+        user_prompt_parts.append(f"\nAcceptance Criteria:\n{work_item['acceptance_criteria']}")
+    if req.count > 0:
+        user_prompt_parts.append(f"\nGenerate exactly {req.count} test cases.")
+    else:
+        user_prompt_parts.append("\nGenerate an appropriate number of test cases to cover all criteria.")
+
+    user_prompt_parts.append(
+        '\nReturn ONLY a JSON array with this structure:\n'
+        '[{"title":"...","preconditions":"...","steps":[{"action":"...","expected":"..."}]}]'
+    )
+    user_text = "\n".join(user_prompt_parts)
+
+    # Call AI
+    if AI_PROVIDER == "nvidia":
+        return await _generate_userstory_nvidia(user_text, work_item)
+    else:
+        return await _generate_userstory_anthropic(user_text, work_item)
+
+
+async def _generate_userstory_anthropic(user_text: str, work_item: dict):
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="ANTHROPIC_API_KEY not configured on server."
+        )
+    try:
+        client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+        message = await client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=8192,
+            system=SYSTEM_PROMPT_USER_STORY,
+            messages=[{"role": "user", "content": user_text}],
+        )
+        raw = message.content[0].text.strip()
+        testcases = _parse_json_response(raw)
+        return {
+            "success": True,
+            "count": len(testcases),
+            "testcases": testcases,
+            "model": "claude-sonnet-4-20250514",
+            "tokens_used": message.usage.input_tokens + message.usage.output_tokens,
+            "work_item": work_item,
+        }
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=422, detail=f"AI returned invalid JSON: {e}")
+    except anthropic.APIError as e:
+        raise HTTPException(status_code=502, detail=f"Anthropic API error: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _generate_userstory_nvidia(user_text: str, work_item: dict):
+    if not NVIDIA_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="NVIDIA_API_KEY not configured on server."
+        )
+    try:
+        client = AsyncOpenAI(api_key=NVIDIA_API_KEY, base_url=NVIDIA_BASE_URL)
+        response = await client.chat.completions.create(
+            model=NVIDIA_MODEL,
+            max_tokens=8192,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT_USER_STORY},
+                {"role": "user", "content": user_text},
+            ],
+            temperature=0.4,
+        )
+        raw = response.choices[0].message.content.strip()
+        testcases = _parse_json_response(raw)
+        tokens_used = 0
+        if response.usage:
+            tokens_used = (response.usage.prompt_tokens or 0) + (response.usage.completion_tokens or 0)
+        return {
+            "success": True,
+            "count": len(testcases),
+            "testcases": testcases,
+            "model": NVIDIA_MODEL,
+            "tokens_used": tokens_used,
+            "work_item": work_item,
+        }
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=422, detail=f"AI returned invalid JSON: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"NVIDIA API error: {e}")

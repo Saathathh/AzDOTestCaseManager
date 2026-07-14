@@ -19,9 +19,10 @@ class AzdoConfig(BaseModel):
     project: str
     pat: str
     plan_id: int
-    story_id: int
+    story_id: Optional[int] = None
     parent_suite_id: Optional[int] = None
     parent_suite_name: Optional[str] = None
+    target_suite_name: Optional[str] = None
     desired_state: str = "Ready"
     tags: str = ""
 
@@ -47,6 +48,15 @@ class AIGenerateRequest(BaseModel):
 
 class TestcasesValidationRequest(BaseModel):
     testcases: List[TestCase]
+
+
+class UserStoryGenerateRequest(BaseModel):
+    org: str
+    project: str
+    pat: str
+    work_item_id: int
+    count: int = Field(default=0, ge=0, le=50)
+    test_type: str = "ui"
 
 
 class ProfileResponse(BaseModel):

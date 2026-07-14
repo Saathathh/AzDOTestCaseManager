@@ -39,23 +39,24 @@ async def _upload_stream(req: UploadRequest):
         yield event("done", "Upload aborted")
         return
 
-    # ── STEP 2: Resolve parent suite ─────────────────────
+    # ── STEP 2: Resolve destination suite ────────────────
+    parent_id = None
     try:
-        parent_id = await azdo.resolve_parent_suite_id(cfg, suites)
-        parent_name = next((s.get("name","") for s in suites if s.get("id") == parent_id), str(parent_id))
-        yield event("ok", f"Parent suite resolved: {parent_name} (ID: {parent_id})", 15)
-    except Exception as e:
-        yield event("err", f"Could not resolve parent suite: {e}", 0)
-        yield event("done", "Upload aborted")
-        return
+        if cfg.story_id or cfg.parent_suite_id or cfg.parent_suite_name:
+            parent_id = await azdo.resolve_parent_suite_id(cfg, suites)
+            parent_name = next((s.get("name", "") for s in suites if s.get("id") == parent_id), str(parent_id))
+            yield event("ok", f"Parent suite resolved: {parent_name} (ID: {parent_id})", 15)
 
-    # ── STEP 3: Create requirement suite ─────────────────
-    yield event("info", f"Creating requirement suite for story {cfg.story_id}…", 20)
-    try:
-        suite_id = await azdo.create_requirement_suite(cfg, parent_id, suites)
-        yield event("ok", f"Requirement suite ready (ID: {suite_id})", 25)
+        if cfg.story_id:
+            yield event("info", f"Creating requirement suite for story {cfg.story_id}…", 20)
+            suite_id = await azdo.create_requirement_suite(cfg, parent_id, suites)
+            yield event("ok", f"Requirement suite ready (ID: {suite_id})", 25)
+        else:
+            yield event("info", f"Resolving target suite '{cfg.target_suite_name}'…", 20)
+            suite_id = await azdo.resolve_or_create_target_suite(cfg, parent_id, suites)
+            yield event("ok", f"Target suite ready (ID: {suite_id})", 25)
     except Exception as e:
-        yield event("err", f"Failed to create suite: {e}", 0)
+        yield event("err", f"Failed to prepare suite: {e}", 0)
         yield event("done", "Upload aborted")
         return
 
@@ -101,7 +102,7 @@ async def _upload_stream(req: UploadRequest):
     status = "success" if failed == 0 else ("partial" if len(created_ids) > 0 else "failed")
     await db.save_upload_history(
         org=cfg.org, project=cfg.project,
-        plan_id=cfg.plan_id, story_id=cfg.story_id,
+        plan_id=cfg.plan_id, story_id=cfg.story_id or 0,
         suite_id=suite_id,
         created=len(created_ids), linked=linked, failed=failed,
         status=status, logs=logs
@@ -145,10 +146,17 @@ async def upload_sync(req: UploadRequest):
     try:
         suites = await azdo.fetch_suites(cfg)
         logs.append(f"Fetched {len(suites)} suites")
-        parent_id = await azdo.resolve_parent_suite_id(cfg, suites)
-        logs.append(f"Parent suite: {parent_id}")
-        suite_id = await azdo.create_requirement_suite(cfg, parent_id)
-        logs.append(f"Suite created: {suite_id}")
+        parent_id = None
+        if cfg.story_id or cfg.parent_suite_id or cfg.parent_suite_name:
+            parent_id = await azdo.resolve_parent_suite_id(cfg, suites)
+            logs.append(f"Parent suite: {parent_id}")
+
+        if cfg.story_id:
+            suite_id = await azdo.create_requirement_suite(cfg, parent_id, suites)
+            logs.append(f"Requirement suite ready: {suite_id}")
+        else:
+            suite_id = await azdo.resolve_or_create_target_suite(cfg, parent_id, suites)
+            logs.append(f"Target suite ready: {suite_id}")
         resolved_state = await azdo.resolve_state(cfg)
 
         for tc in testcases:
@@ -172,7 +180,7 @@ async def upload_sync(req: UploadRequest):
         status = "success" if failed == 0 else ("partial" if created_ids else "failed")
         await db.save_upload_history(
             org=cfg.org, project=cfg.project,
-            plan_id=cfg.plan_id, story_id=cfg.story_id,
+            plan_id=cfg.plan_id, story_id=cfg.story_id or 0,
             suite_id=suite_id,
             created=len(created_ids), linked=linked, failed=failed,
             status=status, logs=logs

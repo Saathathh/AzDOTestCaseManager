@@ -97,6 +97,48 @@ async def create_requirement_suite(cfg: AzdoConfig, parent_suite_id: int, suites
     return resp.json()["id"]
 
 
+def _suite_parent_id(suite: dict) -> Optional[int]:
+    parent = suite.get("parentSuite")
+    if not parent:
+        return None
+    return parent.get("id")
+
+
+async def resolve_or_create_target_suite(cfg: AzdoConfig, parent_suite_id: Optional[int], suites: list) -> int:
+    if not cfg.target_suite_name or not cfg.target_suite_name.strip():
+        raise ValueError("Target suite name is required when Story/Requirement ID is empty")
+
+    target_name = cfg.target_suite_name.strip().lower()
+    matches = [s for s in suites if (s.get("name") or "").strip().lower() == target_name]
+
+    if parent_suite_id is not None:
+        by_parent = [s for s in matches if _suite_parent_id(s) == parent_suite_id]
+        if len(by_parent) == 1:
+            return by_parent[0]["id"]
+        if len(by_parent) > 1:
+            raise ValueError(
+                "Multiple suites matched target suite name under the selected parent. Use Target Suite ID support or rename suites"
+            )
+
+        # If parent was provided but nothing matched under it, fall back to unique global name match.
+        if len(matches) == 1:
+            return matches[0]["id"]
+
+        if len(matches) > 1:
+            raise ValueError(
+                "No suite matched under the selected parent, and multiple suites matched globally. Verify Parent Suite ID/Name"
+            )
+    elif len(matches) == 1:
+        return matches[0]["id"]
+    elif len(matches) > 1:
+        raise ValueError(
+            "Multiple suites matched target suite name. Provide Parent Suite ID or Parent Suite Name to disambiguate"
+        )
+    raise ValueError(
+        f"Target suite '{cfg.target_suite_name.strip()}' was not found in plan {cfg.plan_id}."
+    )
+
+
 # ── TEST CASE STATES ─────────────────────────────────────
 
 async def resolve_state(cfg: AzdoConfig) -> Optional[str]:
@@ -167,3 +209,27 @@ async def add_test_case_to_suite(cfg: AzdoConfig, suite_id: int, tc_id: int) -> 
     client = _get_client()
     resp = await client.post(url, headers=_make_headers(cfg.pat))
     return resp.status_code in (200, 201)
+
+
+# ── WORK ITEM FETCH ──────────────────────────────────────
+
+async def fetch_work_item(org: str, project: str, pat: str, work_item_id: int) -> dict:
+    """Fetch a work item's title, description, and acceptance criteria."""
+    project_enc = quote(project, safe="")
+    url = (
+        f"https://dev.azure.com/{org}/{project_enc}/_apis/wit/workitems/{work_item_id}"
+        f"?$expand=fields&api-version=7.0"
+    )
+    client = _get_client()
+    resp = await client.get(url, headers=_make_headers(pat))
+    resp.raise_for_status()
+    data = resp.json()
+    fields = data.get("fields", {})
+    return {
+        "id": data.get("id"),
+        "title": fields.get("System.Title", ""),
+        "description": fields.get("System.Description", ""),
+        "acceptance_criteria": fields.get("Microsoft.VSTS.Common.AcceptanceCriteria", ""),
+        "work_item_type": fields.get("System.WorkItemType", ""),
+        "state": fields.get("System.State", ""),
+    }

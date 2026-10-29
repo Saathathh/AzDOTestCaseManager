@@ -57,6 +57,9 @@ class UserStoryGenerateRequest(BaseModel):
     work_item_id: int
     count: int = Field(default=0, ge=0, le=50)
     test_type: str = "ui"
+    description: Optional[str] = None
+    image_base64: Optional[str] = None
+    image_media_type: Optional[str] = None
 
 
 class ProfileResponse(BaseModel):

@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,8 +10,9 @@ from dotenv import load_dotenv
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from backend/.env regardless of the current working
+# directory, and override any stale values already present in the environment.
+load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 
 from services.db import init_db
 from routers import config, testcases, history, ai, upload

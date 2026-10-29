@@ -18,14 +18,23 @@ limiter = Limiter(key_func=get_remote_address)
 MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024
 
 # ── Provider config ──────────────────────────────────────
-# AI_PROVIDER: "anthropic" or "nvidia"
+# AI_PROVIDER: "anthropic" or "gemini"
 AI_PROVIDER = os.getenv("AI_PROVIDER", "anthropic").lower()
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
-NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "meta/llama-3.1-70b-instruct")
-NVIDIA_VISION_MODEL = os.getenv("NVIDIA_VISION_MODEL", "meta/llama-3.2-90b-vision-instruct")
-NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
+
+# Google Gemini via its OpenAI-compatible endpoint. Gemini models are multimodal,
+# so the same model is used for text and vision by default.
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", GEMINI_MODEL)
+GEMINI_BASE_URL = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
+
+
+def _openai_compat_config():
+    """Return (api_key, base_url, text_model, vision_model, provider_label) for the
+    active OpenAI-compatible provider (Gemini)."""
+    return GEMINI_API_KEY, GEMINI_BASE_URL, GEMINI_MODEL, GEMINI_VISION_MODEL, "Gemini"
 
 # ── Type-specific system prompts ─────────────────────────
 
@@ -408,8 +417,8 @@ def _build_user_message(req: AIGenerateRequest) -> list:
 @limiter.limit("10/minute")
 async def generate_testcases(request: Request, req: AIGenerateRequest):
     """
-    Generate test cases using AI (Anthropic Claude or NVIDIA NIM).
-    Set AI_PROVIDER env var to 'nvidia' and NVIDIA_API_KEY to use NVIDIA.
+    Generate test cases using AI (Anthropic Claude or Google Gemini).
+    Set AI_PROVIDER env var to 'gemini' and GEMINI_API_KEY to use Gemini.
     """
     if not req.description and not req.image_base64:
         raise HTTPException(
@@ -424,8 +433,8 @@ async def generate_testcases(request: Request, req: AIGenerateRequest):
             detail="Image too large. Maximum size is 10 MB."
         )
 
-    if AI_PROVIDER == "nvidia":
-        return await _generate_nvidia(req)
+    if AI_PROVIDER == "gemini":
+        return await _generate_openai_compat(req)
     else:
         return await _generate_anthropic(req)
 
@@ -465,21 +474,22 @@ async def _generate_anthropic(req: AIGenerateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def _generate_nvidia(req: AIGenerateRequest):
-    if not NVIDIA_API_KEY:
+async def _generate_openai_compat(req: AIGenerateRequest):
+    api_key, base_url, text_model, vision_model, label = _openai_compat_config()
+    if not api_key:
         raise HTTPException(
             status_code=503,
-            detail="NVIDIA_API_KEY not configured on server. Set it in your .env file."
+            detail=f"{label} API key not configured on server. Set it in your .env file."
         )
     try:
         system_prompt = _get_system_prompt(req.test_type)
-        client = AsyncOpenAI(api_key=NVIDIA_API_KEY, base_url=NVIDIA_BASE_URL)
+        client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
         # Use vision model if image is provided, otherwise text model
-        model = NVIDIA_VISION_MODEL if req.image_base64 else NVIDIA_MODEL
+        model = vision_model if req.image_base64 else text_model
 
         # Build message content for OpenAI-compatible API
-        user_content = _build_nvidia_user_content(req)
+        user_content = _build_openai_compat_user_content(req)
 
         response = await client.chat.completions.create(
             model=model,
@@ -509,11 +519,11 @@ async def _generate_nvidia(req: AIGenerateRequest):
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=422, detail=f"AI returned invalid JSON: {e}")
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"NVIDIA API error: {e}")
+        raise HTTPException(status_code=502, detail=f"{label} API error: {e}")
 
 
-def _build_nvidia_user_content(req: AIGenerateRequest):
-    """Build OpenAI-compatible message content for NVIDIA NIM."""
+def _build_openai_compat_user_content(req: AIGenerateRequest):
+    """Build OpenAI-compatible message content for Gemini."""
     parts = []
 
     if req.image_base64:
@@ -619,6 +629,8 @@ async def fetch_workitem_endpoint(req: FetchWorkItemRequest):
     """Fetch work item details (title, description, acceptance criteria) from AzDO."""
     try:
         work_item = await fetch_work_item(req.org, req.project, req.pat, req.work_item_id)
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
         raise HTTPException(
             status_code=502,
@@ -690,16 +702,26 @@ async def generate_from_userstory(request: Request, req: UserStoryGenerateReques
     # Fetch work item from AzDO
     try:
         work_item = await fetch_work_item(req.org, req.project, req.pat, req.work_item_id)
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
         raise HTTPException(
             status_code=502,
             detail=f"Could not fetch work item {req.work_item_id}: {e}"
         )
 
-    if not work_item.get("description") and not work_item.get("acceptance_criteria"):
+    has_story_content = bool(work_item.get("description") or work_item.get("acceptance_criteria"))
+    if not has_story_content and not req.description and not req.image_base64:
         raise HTTPException(
             status_code=400,
-            detail="Work item has no description or acceptance criteria to generate test cases from."
+            detail="Work item has no description or acceptance criteria. Add a screenshot or feature description to generate test cases."
+        )
+
+    # Validate image size (base64 is ~33% larger than raw bytes)
+    if req.image_base64 and len(req.image_base64) > MAX_IMAGE_SIZE_BYTES * 1.34:
+        raise HTTPException(
+            status_code=413,
+            detail="Image too large. Maximum size is 10 MB."
         )
 
     # Build prompt from work item fields
@@ -709,6 +731,10 @@ async def generate_from_userstory(request: Request, req: UserStoryGenerateReques
         user_prompt_parts.append(f"\nDescription:\n{work_item['description']}")
     if work_item.get("acceptance_criteria"):
         user_prompt_parts.append(f"\nAcceptance Criteria:\n{work_item['acceptance_criteria']}")
+    if req.description:
+        user_prompt_parts.append(f"\nAdditional feature description from tester:\n{req.description}")
+    if req.image_base64:
+        user_prompt_parts.append("\nA screenshot of the feature is attached — use it as an additional reference.")
     if req.count > 0:
         user_prompt_parts.append(f"\nGenerate exactly {req.count} test cases.")
     else:
@@ -721,13 +747,13 @@ async def generate_from_userstory(request: Request, req: UserStoryGenerateReques
     user_text = "\n".join(user_prompt_parts)
 
     # Call AI
-    if AI_PROVIDER == "nvidia":
-        return await _generate_userstory_nvidia(user_text, work_item)
+    if AI_PROVIDER == "gemini":
+        return await _generate_userstory_openai_compat(user_text, work_item, req)
     else:
-        return await _generate_userstory_anthropic(user_text, work_item)
+        return await _generate_userstory_anthropic(user_text, work_item, req)
 
 
-async def _generate_userstory_anthropic(user_text: str, work_item: dict):
+async def _generate_userstory_anthropic(user_text: str, work_item: dict, req: UserStoryGenerateRequest):
     if not ANTHROPIC_API_KEY:
         raise HTTPException(
             status_code=503,
@@ -735,11 +761,22 @@ async def _generate_userstory_anthropic(user_text: str, work_item: dict):
         )
     try:
         client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+        user_content = []
+        if req.image_base64:
+            user_content.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": req.image_media_type or "image/png",
+                    "data": req.image_base64,
+                },
+            })
+        user_content.append({"type": "text", "text": user_text})
         message = await client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=8192,
             system=SYSTEM_PROMPT_USER_STORY,
-            messages=[{"role": "user", "content": user_text}],
+            messages=[{"role": "user", "content": user_content}],
         )
         raw = message.content[0].text.strip()
         testcases = _parse_json_response(raw)
@@ -759,20 +796,30 @@ async def _generate_userstory_anthropic(user_text: str, work_item: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def _generate_userstory_nvidia(user_text: str, work_item: dict):
-    if not NVIDIA_API_KEY:
+async def _generate_userstory_openai_compat(user_text: str, work_item: dict, req: UserStoryGenerateRequest):
+    api_key, base_url, text_model, vision_model, label = _openai_compat_config()
+    if not api_key:
         raise HTTPException(
             status_code=503,
-            detail="NVIDIA_API_KEY not configured on server."
+            detail=f"{label} API key not configured on server."
         )
     try:
-        client = AsyncOpenAI(api_key=NVIDIA_API_KEY, base_url=NVIDIA_BASE_URL)
+        client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        model = vision_model if req.image_base64 else text_model
+        if req.image_base64:
+            data_url = f"data:{req.image_media_type or 'image/png'};base64,{req.image_base64}"
+            user_content = [
+                {"type": "image_url", "image_url": {"url": data_url}},
+                {"type": "text", "text": user_text},
+            ]
+        else:
+            user_content = user_text
         response = await client.chat.completions.create(
-            model=NVIDIA_MODEL,
+            model=model,
             max_tokens=8192,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT_USER_STORY},
-                {"role": "user", "content": user_text},
+                {"role": "user", "content": user_content},
             ],
             temperature=0.4,
         )
@@ -785,11 +832,11 @@ async def _generate_userstory_nvidia(user_text: str, work_item: dict):
             "success": True,
             "count": len(testcases),
             "testcases": testcases,
-            "model": NVIDIA_MODEL,
+            "model": model,
             "tokens_used": tokens_used,
             "work_item": work_item,
         }
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=422, detail=f"AI returned invalid JSON: {e}")
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"NVIDIA API error: {e}")
+        raise HTTPException(status_code=502, detail=f"{label} API error: {e}")

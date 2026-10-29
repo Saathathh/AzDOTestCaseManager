@@ -425,6 +425,31 @@ tr:hover td { background: rgba(0, 212, 255, .02); }
 .modal-title span { color: var(--accent); }
 
 /* ── Preview Layout ──────────────────────────────────── */
+.preview-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface2);
+}
+.select-all-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.select-all-label input,
+.preview-check {
+  width: 16px; height: 16px;
+  cursor: pointer;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
 .preview-list {
   display: flex;
   flex-direction: column;
@@ -445,6 +470,10 @@ tr:hover td { background: rgba(0, 212, 255, .02); }
 .preview-item:hover { background: var(--active-tint); }
 .preview-item.selected {
   background: var(--active-tint);
+}
+.preview-item.checked {
+  background: var(--active-tint);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 .preview-item-num {
   width: 28px; height: 28px; border-radius: 50%;

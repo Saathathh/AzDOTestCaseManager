@@ -221,9 +221,25 @@ async def fetch_work_item(org: str, project: str, pat: str, work_item_id: int) -
         f"?$expand=fields&api-version=7.0"
     )
     client = _get_client()
-    resp = await client.get(url, headers=_make_headers(pat))
-    resp.raise_for_status()
-    data = resp.json()
+    try:
+        resp = await client.get(url, headers=_make_headers(pat))
+    except httpx.RequestError as e:
+        raise RuntimeError(f"Network error contacting Azure DevOps: {e}") from e
+
+    if resp.status_code in (401, 203):
+        raise RuntimeError("Authentication failed — check the PAT and its permissions (needs Work Items: Read).")
+    if resp.status_code == 404:
+        raise RuntimeError(f"Work item {work_item_id} not found in project '{project}' (or org/project is wrong).")
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Azure DevOps returned HTTP {resp.status_code}: {resp.text[:300]}")
+
+    # A bad PAT can yield an HTML sign-in page with HTTP 200 — guard the JSON parse.
+    try:
+        data = resp.json()
+    except ValueError as e:
+        raise RuntimeError(
+            "Azure DevOps did not return JSON (likely an invalid/expired PAT or wrong org/project)."
+        ) from e
     fields = data.get("fields", {})
     return {
         "id": data.get("id"),

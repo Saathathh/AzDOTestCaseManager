@@ -1,5 +1,5 @@
 // ── STATE ───────────────────────────────────────────────
-let config = {}, testcases = [], aiGeneratedCases = [];
+let config = {}, testcases = [];
 let imgBase64 = null, imgMediaType = 'image/png';
 
 const API = () => document.getElementById('apiBase').value.replace(/\/$/, '');
@@ -53,9 +53,7 @@ function getFormConfig(){
     pat: document.getElementById('cfgPAT').value.trim(),
     plan_id: parseInt(document.getElementById('cfgPlanId').value)||0,
     story_id: parseInt(document.getElementById('cfgStoryId').value)||null,
-    target_suite_name: document.getElementById('cfgTargetSuiteName').value.trim()||null,
     parent_suite_id: parseInt(document.getElementById('cfgParentId').value)||null,
-    parent_suite_name: document.getElementById('cfgParentName').value.trim()||null,
     desired_state: document.getElementById('cfgState').value,
     tags: document.getElementById('cfgTags').value.trim(),
   };
@@ -64,9 +62,7 @@ function getFormConfig(){
 function saveConfig(){
   const c=getFormConfig();
   if(!c.org||!c.project||!c.pat||!c.plan_id){ showToast('❌ Fill all required fields','error'); return; }
-  if(!c.story_id && !c.target_suite_name){
-    showToast('ℹ️ Story ID and Target Suite Name are empty. Add one before upload.','info');
-  }
+  if(!c.story_id){ showToast('❌ User Story ID / Bug ID is required','error'); return; }
   config=c; showToast('✅ Configuration saved','ok'); goTo(1);
 }
 
@@ -76,9 +72,7 @@ function loadDemo(){
   document.getElementById('cfgPAT').value='replace-with-your-pat';
   document.getElementById('cfgPlanId').value='624343';
   document.getElementById('cfgStoryId').value='678700';
-  document.getElementById('cfgTargetSuiteName').value='test';
   document.getElementById('cfgParentId').value='685758';
-  document.getElementById('cfgParentName').value='E2E Messenger Service';
   document.getElementById('cfgTags').value='QA Testing; CoreServices';
   showToast('📋 Demo values loaded','info');
 }
@@ -119,9 +113,7 @@ async function loadProfileOption(){
     document.getElementById('cfgPAT').value        = '';
     document.getElementById('cfgPlanId').value     = d.plan_id||'';
     document.getElementById('cfgStoryId').value    = d.story_id||'';
-    document.getElementById('cfgTargetSuiteName').value = d.target_suite_name||'';
     document.getElementById('cfgParentId').value   = d.parent_suite_id||'';
-    document.getElementById('cfgParentName').value = d.parent_suite_name||'';
     document.getElementById('cfgState').value      = d.desired_state||'Ready';
     document.getElementById('cfgTags').value       = d.tags||'';
     const msg=document.getElementById('profileMsg');
@@ -154,24 +146,20 @@ async function deleteProfile(){
   } catch { showToast('❌ Failed to delete','error'); }
 }
 
-// ── INPUT MODE SWITCH (Paste JSON / AI Generator) ───────
+// ── INPUT MODE SWITCH (From User Story / Paste JSON) ──
 function switchInputMode(mode){
   const pastePane = document.getElementById('inputModePaste');
-  const aiPane = document.getElementById('inputModeAI');
   const storyPane = document.getElementById('inputModeStory');
   const tabPaste = document.getElementById('modeTabPaste');
-  const tabAI = document.getElementById('modeTabAI');
   const tabStory = document.getElementById('modeTabStory');
   // Hide all
-  aiPane.style.display='none'; pastePane.style.display='none'; storyPane.style.display='none';
-  tabAI.classList.remove('active'); tabPaste.classList.remove('active'); tabStory.classList.remove('active');
-  // Show selected
+  pastePane.style.display='none'; storyPane.style.display='none';
+  tabPaste.classList.remove('active'); tabStory.classList.remove('active');
+  // Show selected (default: story)
   if(mode==='paste'){
     pastePane.style.display=''; tabPaste.classList.add('active');
-  } else if(mode==='story'){
-    storyPane.style.display=''; tabStory.classList.add('active');
   } else {
-    aiPane.style.display=''; tabAI.classList.add('active');
+    storyPane.style.display=''; tabStory.classList.add('active');
   }
 }
 
@@ -236,12 +224,14 @@ async function goToPreview(){
 
 // ── PREVIEW ─────────────────────────────────────────────
 let selectedTC = -1;
+const selectedTCs = new Set();
 
 async function buildPreview(){
   const list=document.getElementById('previewList');
   list.innerHTML='';
   let totalSteps=0;
   selectedTC=-1;
+  selectedTCs.clear();
 
   testcases.forEach((tc,i)=>{
     const steps=tc.steps||[]; totalSteps+=steps.length;
@@ -253,7 +243,7 @@ async function buildPreview(){
     // Clickable row
     const item=document.createElement('div');
     item.className='preview-item';
-    item.innerHTML=`<div class="preview-item-num">${i+1}</div><div class="preview-item-body"><div class="preview-item-title">${esc(tc.title||'Untitled')}</div><div class="preview-item-meta">${esc(tc.preconditions||'No preconditions')}</div></div><span class="preview-chevron">▼</span>`;
+    item.innerHTML=`<input type="checkbox" class="preview-check" data-idx="${i}" onclick="event.stopPropagation();toggleSelectTC(${i},this.checked)"><div class="preview-item-num">${i+1}</div><div class="preview-item-body"><div class="preview-item-title">${esc(tc.title||'Untitled')}</div><div class="preview-item-meta">${esc(tc.preconditions||'No preconditions')}</div></div><span class="preview-chevron">▼</span>`;
     item.onclick=()=>selectTestCase(i);
     wrapper.appendChild(item);
 
@@ -269,6 +259,8 @@ async function buildPreview(){
   document.getElementById('previewListCount').textContent=`${testcases.length} cases`;
   document.getElementById('metricTotal').textContent=testcases.length;
   document.getElementById('metricSteps').textContent=totalSteps;
+  document.getElementById('previewToolbar').style.display=testcases.length?'flex':'none';
+  updateBulkSelectionUI();
   try {
     const r=await fetch(`${API()}/api/testcases/validate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({testcases})});
     const d=await r.json();
@@ -463,6 +455,54 @@ function deleteTestCase(idx){
   showToast('🗑 Test case deleted','warn');
 }
 
+// ── Bulk selection ──────────────────────────────────────
+function toggleSelectTC(idx, checked){
+  if(checked) selectedTCs.add(idx); else selectedTCs.delete(idx);
+  const item=document.querySelector(`.preview-wrapper[data-idx="${idx}"] .preview-item`);
+  if(item) item.classList.toggle('checked', checked);
+  updateBulkSelectionUI();
+}
+
+function toggleSelectAll(checked){
+  selectedTCs.clear();
+  testcases.forEach((_,i)=>{ if(checked) selectedTCs.add(i); });
+  document.querySelectorAll('.preview-check').forEach(cb=>{
+    cb.checked=checked;
+    const item=cb.closest('.preview-item');
+    if(item) item.classList.toggle('checked', checked);
+  });
+  updateBulkSelectionUI();
+}
+
+function updateBulkSelectionUI(){
+  const count=selectedTCs.size;
+  const total=testcases.length;
+  const countEl=document.getElementById('selectedCount');
+  const delBtn=document.getElementById('btnBulkDelete');
+  const selectAll=document.getElementById('selectAllTC');
+  if(countEl){
+    countEl.textContent=`${count} selected`;
+    countEl.style.display=count?'inline-flex':'none';
+  }
+  if(delBtn) delBtn.style.display=count?'inline-flex':'none';
+  if(selectAll){
+    selectAll.checked=total>0 && count===total;
+    selectAll.indeterminate=count>0 && count<total;
+  }
+}
+
+function bulkDeleteTestCases(){
+  const count=selectedTCs.size;
+  if(!count) return;
+  if(!confirm(`Delete ${count} selected test case${count>1?'s':''}? This cannot be undone.`)) return;
+  // Remove in descending index order so earlier indices stay valid.
+  [...selectedTCs].sort((a,b)=>b-a).forEach(i=>testcases.splice(i,1));
+  selectedTCs.clear();
+  selectedTC=-1;
+  buildPreview();
+  showToast(`🗑 Deleted ${count} test case${count>1?'s':''}`,'warn');
+}
+
 function updateMetrics(){
   let totalSteps=0;
   testcases.forEach(tc=>totalSteps+=(tc.steps||[]).length);
@@ -481,8 +521,8 @@ function fillUploadSummary(){
   document.getElementById('upOrg').textContent   = config.org||'—';
   document.getElementById('upPlan').textContent  = config.plan_id||'—';
   document.getElementById('upCount').textContent = testcases.length;
-  const parentSuite = config.parent_suite_id ? `${config.parent_suite_id} — ${config.parent_suite_name||'N/A'}` : (config.parent_suite_name||'root/auto');
-  const target = config.story_id ? `Story ${config.story_id}` : `Suite ${config.target_suite_name||'N/A'}`;
+  const parentSuite = config.parent_suite_id ? String(config.parent_suite_id) : 'root/auto';
+  const target = config.story_id ? `Story/Bug ${config.story_id}` : 'N/A';
   document.getElementById('upParentSuite').textContent = `${parentSuite} | ${target}`;
 }
 
@@ -528,7 +568,8 @@ function resetUpload(){
   setProgress(0,'Ready to upload'); document.getElementById('logWrap').innerHTML='';
   document.getElementById('btnReset').style.display='none';
   document.getElementById('btnUpload').disabled=false; document.getElementById('btnBack3').disabled=false;
-  validateJSONLive(); goTo(1);
+  uploadCompleted=false;
+  validateJSONLive(); goTo(0);
 }
 
 // ── AI GENERATOR (standalone Page 4 — kept for backward compat) ──
@@ -595,56 +636,12 @@ function clearImgInline(){
   document.getElementById('imgInputInline').value='';
 }
 
-async function generateWithAIInline(){
-  const desc=document.getElementById('aiDescInline').value.trim();
-  if(!desc&&!imgBase64){ showToast('❌ Add a description or screenshot','error'); return; }
-  const btn=document.getElementById('btnGenerateInline'), spinner=document.getElementById('aiSpinnerInline');
-  btn.disabled=true; spinner.style.display='inline'; document.getElementById('aiResultInline').style.display='none';
-  try {
-    const r=await fetch(`${API()}/api/ai/generate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-      description:desc, image_base64:imgBase64, image_media_type:imgMediaType,
-      count:parseInt(document.getElementById('aiCountInline').value)||0,
-      test_type:document.getElementById('aiTestTypeInline').value
-    })});
-    const d=await r.json();
-    if(!r.ok) throw new Error(d.detail||'AI generation failed');
-    aiGeneratedCases=d.testcases; renderAIResultInline(d); showToast(`🤖 ${d.count} test cases generated`,'ok');
-  } catch(e){ showToast(`❌ ${e.message}`,'error'); }
-  finally { btn.disabled=false; spinner.style.display='none'; }
-}
-
-function renderAIResultInline(d){
-  document.getElementById('aiResultInline').style.display='block';
-  document.getElementById('aiResultMetaInline').innerHTML=`<span class="badge badge-green">${d.count} generated</span> <span class="badge badge-blue" style="margin-left:5px">${d.model}</span> <span class="badge badge-purple" style="margin-left:5px">${d.tokens_used} tokens</span>`;
-  const body=document.getElementById('aiResultBodyInline'); body.innerHTML='';
-  d.testcases.forEach((tc,i)=>{
-    const tr=document.createElement('tr');
-    tr.innerHTML=`<td style="color:var(--muted)">${i+1}</td><td style="font-weight:600;max-width:300px">${esc(tc.title)}</td><td><span class="badge badge-purple">${(tc.steps||[]).length} steps</span></td>`;
-    body.appendChild(tr);
-  });
-}
-
-function useAIResultInline(){
-  testcases=aiGeneratedCases;
-  document.getElementById('jsonEditor').value=JSON.stringify(testcases,null,2);
-  validateJSONLive();
-  goToPreview();
-}
-
-function loadAIResultToEditor(){
-  testcases=aiGeneratedCases;
-  document.getElementById('jsonEditor').value=JSON.stringify(testcases,null,2);
-  validateJSONLive();
-  switchInputMode('paste');
-  showToast('✅ Loaded into JSON editor','ok');
-}
-
 // ── USER STORY → TEST CASES ────────────────────────────
 let storyGeneratedCases=[];
 
 async function fetchUserStory(){
   const wiId=parseInt(document.getElementById('cfgStoryId').value)||0;
-  if(!wiId){ showToast('❌ Enter Story ID in Configuration page','error'); return; }
+  if(!wiId){ showToast('❌ Enter User Story ID / Bug ID in Configuration page','error'); return; }
   const org=document.getElementById('cfgOrg').value.trim();
   const project=document.getElementById('cfgProject').value.trim();
   const pat=document.getElementById('cfgPAT').value.trim();
@@ -675,7 +672,7 @@ async function fetchUserStory(){
 
 async function generateFromUserStory(){
   const wiId=parseInt(document.getElementById('cfgStoryId').value)||0;
-  if(!wiId){ showToast('❌ Enter Story ID in Configuration page','error'); return; }
+  if(!wiId){ showToast('❌ Enter User Story ID / Bug ID in Configuration page','error'); return; }
   const org=document.getElementById('cfgOrg').value.trim();
   const project=document.getElementById('cfgProject').value.trim();
   const pat=document.getElementById('cfgPAT').value.trim();
@@ -687,7 +684,9 @@ async function generateFromUserStory(){
     const r=await fetch(`${API()}/api/ai/generate-from-userstory`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       org, project, pat, work_item_id:wiId,
       count:parseInt(document.getElementById('storyCountSelect').value)||0,
-      test_type:document.getElementById('storyTestType').value
+      test_type:document.getElementById('storyTestType').value,
+      description:(document.getElementById('aiDescInline').value.trim()||null),
+      image_base64:imgBase64, image_media_type:imgMediaType
     })});
     const d=await r.json();
     if(!r.ok) throw new Error(d.detail||'Generation failed');
